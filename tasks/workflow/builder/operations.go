@@ -21,5 +21,5 @@ import (
 )
 
 func isAsyncOperation(operation string) bool {
-	return operation == strings.ToLower(tosca.RunnableRunOperationName) || true
+	return operation == strings.ToLower(tosca.RunnableRunOperationName)
 }
