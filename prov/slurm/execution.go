@@ -33,6 +33,8 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rs/xid"
+
 	"github.com/ystia/yorc/v4/config"
 	"github.com/ystia/yorc/v4/deployments"
 	"github.com/ystia/yorc/v4/events"
@@ -43,10 +45,16 @@ import (
 	"github.com/ystia/yorc/v4/prov/operations"
 	"github.com/ystia/yorc/v4/tasks"
 	"github.com/ystia/yorc/v4/tosca"
+
+	"github.com/ystia/yorc/v4/tosca/datatypes"
 )
 
 const home = "~"
 const batchScript = "b-%s.batch"
+const copyScriptPath = "/etc/yorc/copy.sh"
+const ackFilePath = "/etc/yorc/ack"
+
+const TransferOperationName = "tosca.interfaces.node.lifecycle.Runnable.transfer"
 
 type execution interface {
 	resolveExecution(ctx context.Context) error
@@ -87,6 +95,14 @@ type executionCommon struct {
 	jobInfo        *jobInfo
 	stepName       string
 	isSingularity  bool
+}
+
+type transferCommon struct {
+	source_directory    string
+	source_properties   map[string]interface{}
+	dest_infrastructure string
+	dest_directory      string
+	dest_properties     map[string]interface{}
 }
 
 func newExecution(ctx context.Context, cfg config.Configuration, taskID, deploymentID, nodeName, stepName string, operation prov.Operation) (execution, error) {
@@ -140,7 +156,6 @@ func newExecution(ctx context.Context, cfg config.Configuration, taskID, deploym
 }
 
 func (e *executionCommon) executeAsync(ctx context.Context) (*prov.Action, time.Duration, error) {
-	// Only runnable operation is currently supported
 	log.Debugf("Execute the operation:%+v", e.operation)
 	// Fill log optional fields for log registration
 	switch strings.ToLower(e.operation.Name) {
@@ -152,9 +167,42 @@ func (e *executionCommon) executeAsync(ctx context.Context) (*prov.Action, time.
 			return nil, 0, err
 		}
 		return e.buildJobMonitoringAction(), e.jobInfo.MonitoringTimeInterval, nil
+
+	case strings.ToLower(TransferOperationName):
+		// SUBMIT TRANSFER JOB
+		err := e.buildJobTransferInfo(ctx)
+		if err != nil {
+			return nil, 0, errors.Wrapf(err, "")
+		}
+
+		err = e.prepareAndSubmitTransferJob(ctx)
+		if err != nil {
+			return nil, 0, errors.Wrapf(err, "")
+		}
+
+		jobInfoJSON, err := json.Marshal(e.jobInfo)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "Failed to marshal Slurm job information")
+		}
+		err = tasks.SetTaskData(e.taskID, e.NodeName+"-transferinfo", string(jobInfoJSON))
+		if err != nil {
+			return nil, 0, err
+		}
+
+		err = deployments.SetAttributeForAllInstances(ctx, e.deploymentID, e.NodeName, "job_id", e.jobInfo.ID)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "failed to retrieve job id an manual cleanup may be necessary: ")
+		}
+
+		// MONITOR JOB
+
+		return e.buildJobMonitoringAction(), e.jobInfo.MonitoringTimeInterval, nil
+
 	default:
 		return nil, 0, errors.Errorf("Unsupported operation %q", e.operation.Name)
 	}
+
+	return nil, 0, nil
 }
 
 func (e *executionCommon) execute(ctx context.Context) error {
@@ -260,6 +308,117 @@ func (e *executionCommon) buildJobMonitoringAction() *prov.Action {
 	data["artifacts"] = strings.Join(e.jobInfo.Artifacts, ",")
 
 	return &prov.Action{ActionType: "job-monitoring", Data: data}
+}
+
+// *************** GET ARGUMENTS FOR JOB ******************
+func (e *executionCommon) getTransferProperties(ctx context.Context) (*transferCommon, error) {
+	source_directory, err := deployments.GetStringNodeProperty(ctx, e.deploymentID, e.NodeName, "source_directory", true)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error during properties access 2")
+	}
+
+	source_infra_props, err := deployments.GetNodePropertyValue(ctx, e.deploymentID, e.NodeName, "source_infrastructure")
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error during properties access 3")
+	}
+
+	dest_directory, err := deployments.GetStringNodeProperty(ctx, e.deploymentID, e.NodeName, "dest_directory", true)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error during properties access 5")
+	}
+
+	dest_infra_type, err := deployments.GetStringNodeProperty(ctx, e.deploymentID, e.NodeName, "dest_infrastructure_type", true)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error during properties access 4")
+	}
+
+	dest_infra_props, err := deployments.GetNodePropertyValue(ctx, e.deploymentID, e.NodeName, "dest_infrastructure")
+	if err != nil {
+		return nil, errors.Wrapf(err, "Error during properties access 6")
+	}
+
+	infraProps := &transferCommon{
+		source_directory:    source_directory,
+		source_properties:   source_infra_props.Value.(map[string]interface{}),
+		dest_infrastructure: dest_infra_type,
+		dest_directory:      dest_directory,
+		dest_properties:     dest_infra_props.Value.(map[string]interface{}),
+	}
+
+	return infraProps, nil
+}
+
+// *************************JOB TRANSFER INFO******************************************
+
+func generateUUID() string {
+	guid := xid.New()
+	return guid.String()
+}
+
+func (e *executionCommon) buildJobTransferInfo(ctx context.Context) error {
+	e.jobInfo = &jobInfo{}
+
+	// JOB NAME
+	e.jobInfo.Name = "Transfer slurm"
+	// JOB N_TASKS
+	e.jobInfo.Tasks = 1
+	// JOB N_NODES
+	e.jobInfo.Nodes = 1
+	// JOB MEM
+	e.jobInfo.Mem = "0K"
+	// JOB CPU
+	e.jobInfo.Cpus = 1
+	// JOB MONITORING TIME
+	e.jobInfo.MonitoringTimeInterval = 5 * time.Second
+
+	args, err := e.getTransferProperties(ctx)
+	if err != nil {
+		return err
+	}
+
+	props := args.dest_properties
+	user, ok := props["user"]
+	if !ok || user == "" {
+		return errors.Errorf("Missing infrastructure parameter: user")
+	}
+
+	hostname, ok := props["hostname"]
+	if !ok || hostname == "" {
+		return errors.Errorf("Missing infrastructure parameter: hostname")
+	}
+
+	port, ok := props["port"]
+	if !ok || port == "" {
+		return errors.Errorf("Missing infrastructure parameter: port")
+	}
+
+	token, ok := props["token"]
+	if !ok || token == "" {
+		return errors.Errorf("Missing infrastructure parameter: token")
+	}
+
+	var baseName = path.Base(args.source_directory)
+	var archiveName = fmt.Sprintf("%s-%s.tar.gz", baseName, generateUUID())
+
+	envVars := make([]string, 8)
+	envVars[0] = fmt.Sprintf("S_DIR=%s", args.source_directory)
+	envVars[1] = fmt.Sprintf("D_DIR=%s", args.dest_directory)
+	envVars[2] = fmt.Sprintf("S_PARENT_DIR=%s", path.Dir(args.source_directory))
+	envVars[3] = fmt.Sprintf("USER=%s", user.(string))
+	envVars[4] = fmt.Sprintf("HOSTNAME=%s", hostname.(string))
+	envVars[5] = fmt.Sprintf("PORT=%s", port.(string))
+	envVars[6] = fmt.Sprintf("TOKEN=%s", token.(string))
+	envVars[7] = fmt.Sprintf("ARCHIVE_NAME=%s", archiveName)
+
+	// JOB EXEC OPTIONS
+	e.jobInfo.ExecutionOptions = datatypes.SlurmExecutionOptions{
+		EnvVars: envVars,
+	}
+	// JOB WORKING DIRECTORY
+	e.jobInfo.WorkingDir = home
+
+	return nil
+
 }
 
 func (e *executionCommon) buildJobInfo(ctx context.Context) error {
@@ -435,6 +594,13 @@ func (e *executionCommon) buildJobOpts() string {
 	}
 	log.Debugf("opts=%q", opts)
 	return opts
+}
+
+// ***************************PREPARE JOB TANSFER AND SUBMIT*********************************
+
+func (e *executionCommon) prepareAndSubmitTransferJob(ctx context.Context) error {
+	cmd := fmt.Sprintf("%s%ssbatch -D %s%s %s", e.addWorkingDirCmd(), e.buildEnvVars(), e.jobInfo.WorkingDir, e.buildJobOpts(), copyScriptPath)
+	return e.submitJob(ctx, cmd)
 }
 
 func (e *executionCommon) prepareAndSubmitJob(ctx context.Context) error {

@@ -20,6 +20,8 @@ import (
 	"github.com/ystia/yorc/v4/tosca"
 )
 
+const TransferOperationName = "tosca.interfaces.node.lifecycle.Runnable.transfer"
+
 func isAsyncOperation(operation string) bool {
-	return operation == strings.ToLower(tosca.RunnableRunOperationName)
+	return operation == strings.ToLower(tosca.RunnableRunOperationName) || operation == strings.ToLower(TransferOperationName)
 }

@@ -79,7 +79,7 @@ dist: build
 	@cd ./dist && zip -r "yorc-server-$(VERSION)-documentation.zip" html Yorc.pdf && zip "yorc-server-$(VERSION)-distrib.zip" yorc "yorc-server-$(VERSION)-documentation.zip"
 
 test: generate header format
-ifndef SKIP_TESTS
+ifdef SKIP_TESTS
 	@echo "--> Running go test"
 	@go test -tags "testing $(BUILD_TAGS)" $(TESTARGS) -p 1 ./...
 endif

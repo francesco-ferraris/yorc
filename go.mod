@@ -65,6 +65,7 @@ require (
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/common v0.6.0 // indirect
 	github.com/prometheus/procfs v0.0.3 // indirect
+	github.com/rs/xid v1.2.1
 	github.com/satori/go.uuid v1.0.0
 	github.com/sethgrid/pester v0.0.0-20190127155807-68a33a018ad0 // indirect
 	github.com/spf13/afero v1.2.2 // indirect

@@ -45,6 +45,7 @@ type allocationResponse struct {
 const reSallocPending = `^salloc: Pending job allocation (\d+)`
 const reSallocGranted = `^salloc: Granted job allocation (\d+)`
 
+// NOTHING TO EDIT
 func getJobExecution(ctx context.Context, conf config.Configuration, taskID, deploymentID, nodeName string, operation prov.Operation, stepName string) (execution, error) {
 	isJob, err := deployments.IsNodeDerivedFrom(ctx, deploymentID, nodeName, "yorc.nodes.slurm.Job")
 	if err != nil {
