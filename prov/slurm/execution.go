@@ -51,8 +51,9 @@ import (
 
 const home = "~"
 const batchScript = "b-%s.batch"
-const copyScriptPath = "/etc/yorc/copy.sh"
-const ackFilePath = "/etc/yorc/ack"
+const copyScriptPath = "/etc/yorc/transfer.sh"
+
+//const ackFilePath = "/etc/yorc/ack"
 
 const TransferOperationName = "tosca.interfaces.node.lifecycle.Runnable.transfer"
 
@@ -404,11 +405,11 @@ func (e *executionCommon) buildJobTransferInfo(ctx context.Context) error {
 	envVars[0] = fmt.Sprintf("S_DIR=%s", args.source_directory)
 	envVars[1] = fmt.Sprintf("D_DIR=%s", args.dest_directory)
 	envVars[2] = fmt.Sprintf("S_PARENT_DIR=%s", path.Dir(args.source_directory))
-	envVars[3] = fmt.Sprintf("USER=%s", user.(string))
-	envVars[4] = fmt.Sprintf("HOSTNAME=%s", hostname.(string))
+	envVars[3] = fmt.Sprintf("DEST_USER=%s", user.(string))
+	envVars[4] = fmt.Sprintf("DEST_HOSTNAME=%s", hostname.(string))
 	envVars[5] = fmt.Sprintf("PORT=%s", port.(string))
 	envVars[6] = fmt.Sprintf("TOKEN=%s", token.(string))
-	envVars[7] = fmt.Sprintf("ARCHIVE_NAME=%s", archiveName)
+	envVars[7] = fmt.Sprintf("ARCH_NAME=%s", archiveName)
 
 	// JOB EXEC OPTIONS
 	e.jobInfo.ExecutionOptions = datatypes.SlurmExecutionOptions{

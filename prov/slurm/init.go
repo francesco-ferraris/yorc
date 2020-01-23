@@ -20,6 +20,8 @@ const (
 	artifactGenericImplementation = "yorc.artifacts.Deployment.SlurmJob"
 	artifactBatchImplementation   = "yorc.artifacts.Deployment.SlurmJobBatch"
 	artifactImageImplementation   = "yorc.artifacts.Deployment.SlurmJobImage"
+
+	artifactJobDataTransfer = "yorc.artifacts.Deployment.JobDataTransfer"
 )
 
 func init() {
@@ -31,6 +33,7 @@ func init() {
 			artifactGenericImplementation,
 			artifactBatchImplementation,
 			artifactImageImplementation,
+			artifactJobDataTransfer,
 		}, executor, registry.BuiltinOrigin)
 
 	reg.RegisterActionOperator([]string{"job-monitoring"}, &actionOperator{}, registry.BuiltinOrigin)
